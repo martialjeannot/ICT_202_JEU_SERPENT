@@ -1,0 +1,62 @@
+name: snake_game
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_launcher_icons: ^0.14.3
+  flutter_native_splash: ^2.4.6
+  lottie: ^3.3.1
+  audioplayers: ^6.4.0
+  flame: ^1.27.0
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  path_provider: ^2.0.11
+  screenshot: ^3.0.0
+  share_plus: ^10.1.4
+  web_socket_channel: ^3.0.2
+  network_info_plus: ^6.1.3
+  permission_handler: ^12.0.0+1
+  http: 1.3.0
+  udp: ^5.0.3
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  image_path: "assets/images/icone.png"
+  ios: true
+  background_color: "#000000"
+  min_sdk_and: 21
+
+flutter_native_splash:
+  color: "#000000"
+  image: "assets/images/icone.png"
+  android_12:
+    image: "assets/images/icone.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/lotties/ 
+    - assets/sons/
+
+fonts:
+  - family: Roboto
+    fonts:
+      - asset: assets/fonts/Roboto/Roboto-Regular.ttf
+      - asset: assets/fonts/Roboto/Roboto-Bold.ttf
+        weight: 700
+      - asset: assets/fonts/Roboto/Roboto-Italic.ttf
+        style: italic
+      - asset: assets/fonts/Roboto/Roboto-Light.ttf
+        weight: 300  
