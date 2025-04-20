@@ -47,7 +47,7 @@ class Snake {
     
     // Trouver des positions valides pour les autres segments
     // Essayer d'abord vers la gauche
-    Vector2 direction = Vector2(-1, 0);
+    //Vector2 direction = Vector2(-1, 0);
     
     for (int i = 1; i < 3; i++) {
       Vector2? nextPos;

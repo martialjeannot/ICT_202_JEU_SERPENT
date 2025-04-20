@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'snake.dart';
 import 'eat.dart';
+import 'audio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:permission_handler/permission_handler.dart';
+
 import 'package:flutter/rendering.dart';
 import 'dart:async' as async;
 import 'package:flame/components.dart';
@@ -37,6 +41,7 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
 
   final Vector2 _gameSize = Vector2(400, 300);
   final int _snakeSpeed = 350; // Vitesse du serpent (150 ms)
+  late GameAudio _gameAudio;
 
   // Définir les dimensions d'une cellule de la grille
   final double _cellSize =
@@ -66,6 +71,8 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
       _cellSize * 0.8,
     ); // Taille de la nourriture légèrement plus petite
     _placeFoodOnGrid(); // Placer la nourriture sur la grille
+    _gameAudio = GameAudio();
+    _gameAudio.playGameSound();
 
     _startGame(); // Démarrer le jeu automatiquement
   }
@@ -139,33 +146,58 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
   }
 
   void _showGameOverDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder:
-          (_) => AlertDialog(
-            title: const Text("Game Over"),
-            content: Text("Votre score est $_score.\nVoulez-vous rejouer ?"),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _restartGame();
-                },
-                child: const Text("Rejouer"),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).pop(); // Retour à la page précédente
-                },
-                child: const Text("Quitter"),
-              ),
-            ],
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AlertDialog(
+      backgroundColor: Colors.black54,
+      title: const Text(
+        "Game Over",
+        style: TextStyle(color: Colors.redAccent, fontSize: 24),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min, // Ajuste la taille de la boîte de dialogue
+        children: [
+           Text(
+            "Votre score est $_score .\nVoulez-vous rejouer ?",
+            style: TextStyle(color: Colors.white, fontSize: 18),
+            textAlign: TextAlign.center,
           ),
-    );
-  }
-
+          const SizedBox(height: 10),
+          Image.asset(
+            'assets/images/images.jpg', // Assurez-vous d'avoir une image ici
+            height: 200,
+            
+            fit: BoxFit.cover,
+            
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+            _restartGame();
+          },
+          child: const Text(
+            "Rejouer",
+            style: TextStyle(color: Colors.green),
+          ),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+            Navigator.of(context).pop(); // Retour à la page précédente
+          },
+          child: const Text(
+            "Quitter",
+            style: TextStyle(color: Colors.red),
+          ),
+        ),
+      ],
+    ),
+  );
+}
   void _restartGame() {
     setState(() {
       _initializeGrid();
@@ -178,6 +210,7 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
       _eat = Eat(Vector2(0, 0));
       _eat.size = Vector2(_cellSize * 0.8, _cellSize * 0.8);
       _placeFoodOnGrid();
+      
 
       _score = 0;
       _temps = 0;
@@ -236,22 +269,62 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
     return (d1.x + d2.x == 0 && d1.y + d2.y == 0);
   }
 
-  // Prise de la capture d'écran
-  Future<void> _takeScreenshot(BuildContext context) async {
-    try {
-      // Vérifiez que le RepaintBoundary est disponible
-      if (_repaintBoundaryKey.currentContext != null) {
-        RenderRepaintBoundary boundary =
-            _repaintBoundaryKey.currentContext!.findRenderObject()
-                as RenderRepaintBoundary;
-        var image = await boundary.toImage();
-        ByteData? byteData = await image.toByteData(
-          format: ui.ImageByteFormat.png,
-        );
-        if (byteData != null) {
-          Uint8List pngBytes = byteData.buffer.asUint8List();
-          await _shareScreenshot(pngBytes);
+ // Ajoutez cette fonction pour demander les permissions
+Future<bool> _requestPermissions() async {
+  if (Platform.isAndroid) {
+    if (await Permission.storage.request().isGranted) {
+      return true;
+    }
+  } else if (Platform.isIOS) {
+    if (await Permission.photos.request().isGranted) {
+      return true;
+    }
+  }
+  return false;
+}
 
+
+  // Prise de la capture d'écran
+ Future<void> _takeScreenshot(BuildContext context) async {
+  if (!kIsWeb) {
+    // Demandez les permissions
+    bool hasPermissions = await _requestPermissions();
+    if (!hasPermissions) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Permissions refusées pour la capture d\'écran'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+  }
+  
+  try {
+    // Vérifiez que le RepaintBoundary est disponible
+    if (_repaintBoundaryKey.currentContext != null) {
+      RenderRepaintBoundary boundary =
+          _repaintBoundaryKey.currentContext!.findRenderObject()
+              as RenderRepaintBoundary;
+      var image = await boundary.toImage();
+      ByteData? byteData = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
+      if (byteData != null) {
+        Uint8List pngBytes = byteData.buffer.asUint8List();
+        
+        // Vérifier la plateforme
+        if (kIsWeb) {
+          // Logique spécifique au web si nécessaire
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('La capture d\'écran n\'est pas encore supportée sur le web'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          await _shareScreenshot(pngBytes);
+          
           // Afficher un message de succès
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -261,30 +334,45 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
           );
         }
       }
-    } catch (e) {
-      print("Erreur de capture d'écran : $e");
     }
+  } catch (e) {
+    print("Erreur de capture d'écran : $e");
+    // Afficher un message d'erreur à l'utilisateur
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Erreur lors de la capture d\'écran: $e'),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
+}
 
-  Future<void> _shareScreenshot(Uint8List imageBytes) async {
-    try {
+Future<void> _shareScreenshot(Uint8List imageBytes) async {
+  try {
+    // Vérifier si nous ne sommes pas sur le web
+    if (!kIsWeb) {
       final directory = await getTemporaryDirectory();
       final imagePath = '${directory.path}/screenshot.png';
       final file = File(imagePath);
       await file.writeAsBytes(imageBytes);
 
       await Share.share('Voici ma capture d\'écran !\n$imagePath');
-    } catch (e) {
-      print("Erreur lors du partage : $e");
+    } else {
+      // Pour le web, vous pourriez implémenter une solution alternative
+      print("Le partage d'écran n'est pas disponible sur le web");
     }
+  } catch (e) {
+    print("Erreur lors du partage : $e");
   }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
+}
+@override
+void deactivate() {
+  _gameAudio.stopGameSound(); // Arrêter le son du jeu
+  _gameAudio.stopBackgroundMusic(); // Arrêter la musique de fond
+  super.deactivate();
+}
+ 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -300,23 +388,26 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
                 Text(
                   widget.nomDuJoueur,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 20,
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
                 Text(
                   "Score: $_score",
-                  style: const TextStyle(fontSize: 16, color: Colors.white),
+                  style: const TextStyle(fontSize: 20, color: Colors.white),
                 ),
                 Text(
                   "Temps: $_temps s",
-                  style: const TextStyle(fontSize: 16, color: Colors.white),
+                  style: const TextStyle(fontSize: 20, color: Colors.white),
                 ),
                 ElevatedButton(
                   onPressed: _pauseGame,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.grey[800],
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
                   ),
                   child: Text(_isPaused ? 'Reprendre' : 'Pause'),
                 ),
@@ -332,7 +423,10 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
                 child: Container(
                   width: _gameSize.x,
                   height: _gameSize.y,
-
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(15),
+                    color: Colors.grey[900],
+                  ),
                   child: Stack(
                     children: [
                       // Grille de cercles
@@ -358,7 +452,7 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
                         var segment = entry.value;
 
                         if (index == 0) {
-                          // Tête du serpent (plus réaliste avec des yeux)
+                          // Tête du serpent
                           return Positioned(
                             left: segment.position.x,
                             top: segment.position.y,
@@ -434,7 +528,7 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
                             ),
                           );
                         } else if (index == _snake.body.length - 1) {
-                          // Queue du serpent (plus petit et pointu)
+                          // Queue du serpent
                           return Positioned(
                             left: segment.position.x + _cellSize * 0.1,
                             top: segment.position.y + _cellSize * 0.1,
@@ -448,7 +542,7 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
                             ),
                           );
                         } else {
-                          // Corps du serpent (alternance de cercles et carrés arrondis)
+                          // Corps du serpent
                           return Positioned(
                             left: segment.position.x,
                             top: segment.position.y,
@@ -503,68 +597,42 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          // Flèches de direction
-          SizedBox(
-            height: 80,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                SizedBox(
-                  width: 50,
-                  child: GestureDetector(
-                    onTap: () => _updateDirection(Vector2(-1, 0)),
-                    child: Image.asset(
-                      'assets/images/fleche_gauche.png',
-                      width: 30,
-                      height: 30,
-                    ),
-                  ),
+          // Zone de contrôle par glissement occupe tout l'espace
+          GestureDetector(
+            onHorizontalDragUpdate: (details) {
+              if (details.delta.dx > 0) {
+                _updateDirection(Vector2(1, 0)); // Droite
+              } else if (details.delta.dx < 0) {
+                _updateDirection(Vector2(-1, 0)); // Gauche
+              }
+            },
+            onVerticalDragUpdate: (details) {
+              if (details.delta.dy > 0) {
+                _updateDirection(Vector2(0, 1)); // Bas
+              } else if (details.delta.dy < 0) {
+                _updateDirection(Vector2(0, -1)); // Haut
+              }
+            },
+            child: Container(
+              height: 80, // Ajuste la hauteur si nécessaire
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.grey[700]!, Colors.black],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
                 ),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 50,
-                      child: GestureDetector(
-                        onTap: () => _updateDirection(Vector2(0, -1)),
-                        child: Image.asset(
-                          'assets/images/fleche_haut.png',
-                          width: 30,
-                          height: 30,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: 50,
-                      child: GestureDetector(
-                        onTap: () => _updateDirection(Vector2(0, 1)),
-                        child: Image.asset(
-                          'assets/images/fleche_bas.png',
-                          width: 30,
-                          height: 30,
-                        ),
-                      ),
-                    ),
-                  ],
+                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              ),
+              child: const Center(
+                child: Text(
+                  'Glissez pour contrôler le serpent',
+                  style: TextStyle(color: Colors.white, fontSize: 16),
                 ),
-                SizedBox(
-                  width: 50,
-                  child: GestureDetector(
-                    onTap: () => _updateDirection(Vector2(1, 0)),
-                    child: Image.asset(
-                      'assets/images/fleche_droite.png',
-                      width: 30,
-                      height: 30,
-                    ),
-                  ),
-                ),
-              ],
+              ),
+
             ),
           ),
-          const SizedBox(height: 20),
-          const Divider(color: Colors.red),
+
           if (_isGameOver)
             const Text(
               "Game Over",
@@ -574,4 +642,4 @@ class _GrilleMoyenneState extends State<GrilleMoyenne> {
       ),
     );
   }
-}
+} 
