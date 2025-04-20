@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-//import 'package:untitled/pages/sologame/audio.dart'; // Pour le serpent
 import 'eat.dart'; // Pour la nourriture
 import 'snake.dart';
 import 'package:flutter/rendering.dart';
@@ -34,8 +33,15 @@ class _GrilleFacileState extends State<GrilleFacile> {
   bool _isPaused = false;
   bool _isGameOver = false;
 
-  final Vector2 _gameSize = Vector2(400, 200);
-  final int _snakeSpeed = 150; // Vitesse du serpent (150 ms)
+  final Vector2 _gameSize = Vector2(400, 300);
+  final int _snakeSpeed = 500; // Vitesse du serpent (150 ms)
+
+  // Définir les dimensions d'une cellule de la grille
+  final double _cellSize =
+      20.0; // Taille d'une cellule de la grille (petit cercle)
+
+  // Grille pour stocker les positions des cercles
+  List<Vector2> _gridPositions = [];
 
   final ScreenshotController _screenshotController = ScreenshotController();
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -43,13 +49,56 @@ class _GrilleFacileState extends State<GrilleFacile> {
   @override
   void initState() {
     super.initState();
+    _initializeGrid(); // Initialiser la grille de cercles
+
     _snake = Snake();
     _snake.vitesse = _snakeSpeed;
+    _snake.cellSize = _cellSize; // Définir la taille des segments du serpent
+    _snake.initializeOnGrid(
+      _gridPositions,
+    ); // Initialiser le serpent sur la grille
 
-    _eat = Eat(Vector2(200, 200));
-    _eat.relocate(_gameSize, _snake.body); // Relocaliser la nourriture
+    _eat = Eat(Vector2(0, 0));
+    _eat.size = Vector2(
+      _cellSize * 0.8,
+      _cellSize * 0.8,
+    ); // Taille de la nourriture légèrement plus petite
+    _placeFoodOnGrid(); // Placer la nourriture sur la grille
 
     _startGame(); // Démarrer le jeu automatiquement
+  }
+
+  void _initializeGrid() {
+    _gridPositions.clear();
+    int cols = (_gameSize.x / _cellSize).floor();
+    int rows = (_gameSize.y / _cellSize).floor();
+
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < rows; j++) {
+        // Calculer les coordonnées centrales de chaque cellule
+        double x = i * _cellSize;
+        double y = j * _cellSize;
+        _gridPositions.add(Vector2(x, y));
+      }
+    }
+  }
+
+  void _placeFoodOnGrid() {
+    // Filtrer les positions de la grille qui ne sont pas occupées par le serpent
+    List<Vector2> availablePositions =
+        _gridPositions.where((pos) {
+          return !_snake.body.any(
+            (segment) =>
+                segment.position.x == pos.x && segment.position.y == pos.y,
+          );
+        }).toList();
+
+    if (availablePositions.isNotEmpty) {
+      // Sélectionner une position aléatoire parmi les positions disponibles
+      availablePositions.shuffle();
+      Vector2 foodPosition = availablePositions.first;
+      _eat.position = foodPosition;
+    }
   }
 
   void _startGame() {
@@ -58,7 +107,10 @@ class _GrilleFacileState extends State<GrilleFacile> {
     _timer = async.Timer.periodic(Duration(milliseconds: _snakeSpeed), (timer) {
       if (!_isPaused && !_isGameOver) {
         setState(() {
-          _snake.move();
+          _snake.moveOnGrid(
+            _gridPositions,
+            _cellSize,
+          ); // Déplacer le serpent sur la grille
           _temps++;
 
           if (_checkCollision()) {
@@ -72,10 +124,11 @@ class _GrilleFacileState extends State<GrilleFacile> {
             }
           }
 
-          if (_snake.body.first.position.distanceTo(_eat.position) < 12) {
+          if (_snake.body.first.position.distanceTo(_eat.position) <
+              _cellSize * 0.5) {
             _score += 10;
             _snake.grow(); // Ajoute un segment lorsque le serpent mange
-            _eat.relocate(_gameSize, _snake.body); // Relocaliser la nourriture
+            _placeFoodOnGrid(); // Relocaliser la nourriture sur la grille
             _playSound('sons/eat.mp3'); // Jouer son de nourriture mangée
           }
         });
@@ -87,37 +140,42 @@ class _GrilleFacileState extends State<GrilleFacile> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text("Game Over"),
-        content: Text("Votre score est $_score.\nVoulez-vous rejouer ?"),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              _restartGame();
-            },
-            child: const Text("Rejouer"),
+      builder:
+          (_) => AlertDialog(
+            title: const Text("Game Over"),
+            content: Text("Votre score est $_score.\nVoulez-vous rejouer ?"),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _restartGame();
+                },
+                child: const Text("Rejouer"),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pop(); // Retour à la page précédente
+                },
+                child: const Text("Quitter"),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pop(); // Retour à la page précédente
-            },
-            child: const Text("Quitter"),
-          ),
-        ],
-      ),
     );
   }
 
   void _restartGame() {
     setState(() {
+      _initializeGrid();
       _snake = Snake();
       _snake.vitesse = _snakeSpeed;
+      _snake.cellSize = _cellSize;
+      _snake.initializeOnGrid(_gridPositions);
       _lastDirection = Vector2(1, 0);
 
-      _eat = Eat(Vector2(200, 200));
-      _eat.relocate(_gameSize, _snake.body);
+      _eat = Eat(Vector2(0, 0));
+      _eat.size = Vector2(_cellSize * 0.8, _cellSize * 0.8);
+      _placeFoodOnGrid();
 
       _score = 0;
       _temps = 0;
@@ -137,11 +195,21 @@ class _GrilleFacileState extends State<GrilleFacile> {
     final head = _snake.body.first.position;
 
     // Vérifiez si la tête du serpent dépasse les limites de la grille
-    return head.x < 0 ||
-        head.x + _snake.body.first.size.x > _gameSize.x ||
+    if (head.x < 0 ||
+        head.x + _cellSize > _gameSize.x ||
         head.y < 0 ||
-        head.y + _snake.body.first.size.y > _gameSize.y ||
-        _snake.body.skip(1).any((segment) => segment.position == head);
+        head.y + _cellSize > _gameSize.y) {
+      return true;
+    }
+
+    // Vérifiez si la tête touche un autre segment du corps (sauf le dernier segment qui se déplace)
+    for (int i = 1; i < _snake.body.length - 1; i++) {
+      if (_snake.body[i].position.distanceTo(head) < _cellSize * 0.5) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   void _pauseGame() {
@@ -152,7 +220,7 @@ class _GrilleFacileState extends State<GrilleFacile> {
 
   void _updateDirection(Vector2 newDirection) {
     if (_isOppositeDirection(_lastDirection, newDirection)) {
-      // Ne rien faire si c’est la direction opposée
+      // Ne rien faire si c'est la direction opposée
       return;
     }
 
@@ -172,7 +240,8 @@ class _GrilleFacileState extends State<GrilleFacile> {
       // Vérifiez que le RepaintBoundary est disponible
       if (_repaintBoundaryKey.currentContext != null) {
         RenderRepaintBoundary boundary =
-            _repaintBoundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+            _repaintBoundaryKey.currentContext!.findRenderObject()
+                as RenderRepaintBoundary;
         var image = await boundary.toImage();
         ByteData? byteData = await image.toByteData(
           format: ui.ImageByteFormat.png,
@@ -255,55 +324,174 @@ class _GrilleFacileState extends State<GrilleFacile> {
           const SizedBox(height: 10),
           Expanded(
             child: RepaintBoundary(
-              key: _repaintBoundaryKey, // Ajoutez le GlobalKey ici
+              key: _repaintBoundaryKey,
               child: Screenshot(
                 controller: _screenshotController,
                 child: Container(
                   width: _gameSize.x,
                   height: _gameSize.y,
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: const Color.fromARGB(255, 59, 2, 2),
-                    ),
-                    color: Colors.grey[900],
-                  ),
+
                   child: Stack(
                     children: [
-                      // Grille de carreaux (10x10)
-                      for (int i = 0; i < 10; i++)
-                        for (int j = 0; j < 10; j++)
-                          Positioned(
-                            left: (i * (_gameSize.x / 10)),
-                            top: (j * (_gameSize.y / 10)),
-                            child: Container(
-                              width: _gameSize.x / 10,
-                              height: _gameSize.y / 10,
-                              color: Colors.lime, // Couleur vert citron
+                      // Grille de cercles
+                      ..._gridPositions.map(
+                        (position) => Positioned(
+                          left: position.x,
+                          top: position.y,
+                          child: Container(
+                            width: _cellSize,
+                            height: _cellSize,
+                            decoration: BoxDecoration(
+                              color: Colors.lime.withOpacity(0.3),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.lime, width: 1),
                             ),
                           ),
-
-                      // Segments du serpent
-                      for (var segment in _snake.body)
-                        Positioned(
-                          left: segment.position.x,
-                          top: segment.position.y,
-                          child: Container(
-                            width: segment.size.x,
-                            height: segment.size.y,
-                            color: Colors.green,
-                          ),
                         ),
+                      ),
 
-                      // Bouffe
+                      // Corps du serpent (segments)
+                      ..._snake.body.asMap().entries.map((entry) {
+                        int index = entry.key;
+                        var segment = entry.value;
+
+                        if (index == 0) {
+                          // Tête du serpent (plus réaliste avec des yeux)
+                          return Positioned(
+                            left: segment.position.x,
+                            top: segment.position.y,
+                            child: Container(
+                              width: _cellSize,
+                              height: _cellSize,
+                              decoration: BoxDecoration(
+                                color: Colors.green[700],
+                                shape: BoxShape.circle,
+                              ),
+                              child: Stack(
+                                children: [
+                                  // Œil gauche
+                                  Positioned(
+                                    left:
+                                        _snake.direction.x > 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    top:
+                                        _snake.direction.y > 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    child: Container(
+                                      width: _cellSize * 0.25,
+                                      height: _cellSize * 0.25,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Center(
+                                        child: Container(
+                                          width: _cellSize * 0.1,
+                                          height: _cellSize * 0.1,
+                                          decoration: const BoxDecoration(
+                                            color: Colors.black,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  // Œil droit
+                                  Positioned(
+                                    right:
+                                        _snake.direction.x < 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    top:
+                                        _snake.direction.y > 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    child: Container(
+                                      width: _cellSize * 0.25,
+                                      height: _cellSize * 0.25,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Center(
+                                        child: Container(
+                                          width: _cellSize * 0.1,
+                                          height: _cellSize * 0.1,
+                                          decoration: const BoxDecoration(
+                                            color: Colors.black,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        } else if (index == _snake.body.length - 1) {
+                          // Queue du serpent (plus petit et pointu)
+                          return Positioned(
+                            left: segment.position.x + _cellSize * 0.1,
+                            top: segment.position.y + _cellSize * 0.1,
+                            child: Container(
+                              width: _cellSize * 0.8,
+                              height: _cellSize * 0.8,
+                              decoration: BoxDecoration(
+                                color: Colors.green[300],
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          );
+                        } else {
+                          // Corps du serpent (alternance de cercles et carrés arrondis)
+                          return Positioned(
+                            left: segment.position.x,
+                            top: segment.position.y,
+                            child: Container(
+                              width: _cellSize,
+                              height: _cellSize,
+                              decoration: BoxDecoration(
+                                color:
+                                    index % 2 == 0
+                                        ? Colors.green
+                                        : Colors.green[500],
+                                shape:
+                                    index % 3 == 0
+                                        ? BoxShape.circle
+                                        : BoxShape.rectangle,
+                                borderRadius:
+                                    index % 3 != 0
+                                        ? BorderRadius.circular(5)
+                                        : null,
+                              ),
+                            ),
+                          );
+                        }
+                      }),
+
+                      // Nourriture (cercle orange)
                       Positioned(
-                        left: _eat.position.x,
-                        top: _eat.position.y,
+                        left: _eat.position.x + _cellSize * 0.1,
+                        top: _eat.position.y + _cellSize * 0.1,
                         child: Container(
                           width: _eat.size.x,
                           height: _eat.size.y,
                           decoration: const BoxDecoration(
-                            color: Colors.orange,
+                            color: Colors.red,
                             shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Container(
+                              width: _eat.size.x * 0.5,
+                              height: _eat.size.y * 0.5,
+                              decoration: const BoxDecoration(
+                                color: Colors.orange,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
                           ),
                         ),
                       ),

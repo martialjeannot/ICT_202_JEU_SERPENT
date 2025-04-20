@@ -1,12 +1,17 @@
 import 'package:flutter/material.dart';
 import 'snake.dart';
 import 'eat.dart';
+import 'package:flutter/rendering.dart';
 import 'dart:async' as async;
 import 'package:flame/components.dart';
+import 'package:path_provider/path_provider.dart';
+import 'bomb.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
-import 'dart:math';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 class GrilleDifficile extends StatefulWidget {
   final String nomDuJoueur;
@@ -21,133 +26,221 @@ class _GrilleDifficileState extends State<GrilleDifficile> {
   late Snake _snake;
   late Eat _eat;
   late async.Timer _timer;
+  Vector2 _lastDirection = Vector2(1, 0); // Direction initiale
+  final GlobalKey _repaintBoundaryKey = GlobalKey();
+  late Bomb _bomb;
 
   int _score = 0;
   int _temps = 0;
   bool _isPaused = false;
   bool _isGameOver = false;
 
-  final Vector2 _gameSize = Vector2(350, 310);
+  final Vector2 _gameSize = Vector2(350, 400);
+  final int _snakeSpeed = 150; // Vitesse du serpent (150 ms)
+
+  // Définir les dimensions d'une cellule de la grille
+  final double _cellSize =
+      20.0; // Taille d'une cellule de la grille (petit cercle)
+
+  // Grille pour stocker les positions des cercles
+  List<Vector2> _gridPositions = [];
+
   final ScreenshotController _screenshotController = ScreenshotController();
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   @override
   void initState() {
     super.initState();
-    _startNewGame();
+    _initializeGrid(); // Initialiser la grille de cercles
+
+    _snake = Snake();
+    _snake.vitesse = _snakeSpeed;
+    _snake.cellSize = _cellSize; // Définir la taille des segments du serpent
+    _snake.initializeOnGrid(
+      _gridPositions,
+    ); // Initialiser le serpent sur la grille
+
+    _eat = Eat(Vector2(0, 0));
+    _eat.size = Vector2(
+      _cellSize * 0.8,
+      _cellSize * 0.8,
+    ); // Taille de la nourriture légèrement plus petite
+    _placeFoodOnGrid(); // Placer la nourriture sur la grille
+    _bomb = Bomb(Vector2(0, 0));
+    _placeBombOnGrid(); // bombe
+
+    _startGame(); // Démarrer le jeu automatiquement
   }
 
-  void _startNewGame() {
-    _snake = Snake();
-    _snake.vitesse = 150;
-    _eat = Eat(Vector2(0, 0));
-    _relocateFood();
-    _score = 0;
-    _temps = 0;
-    _isPaused = false;
-    _isGameOver = false;
-    _startGame();
+  void _initializeGrid() {
+    _gridPositions.clear();
+    int cols = (_gameSize.x / _cellSize).floor();
+    int rows = (_gameSize.y / _cellSize).floor();
+
+    for (int i = 0; i < cols; i++) {
+      for (int j = 0; j < rows; j++) {
+        // Calculer les coordonnées centrales de chaque cellule
+        double x = i * _cellSize;
+        double y = j * _cellSize;
+        _gridPositions.add(Vector2(x, y));
+      }
+    }
+  }
+
+  // methode pour la gestion de ma bombe
+  void _placeBombOnGrid() {
+    List<Vector2> availablePositions =
+        _gridPositions.where((pos) {
+          return !_snake.body.any(
+                (segment) =>
+                    segment.position.x == pos.x && segment.position.y == pos.y,
+              ) &&
+              (pos != _eat.position); // Pas sur le serpent ni la nourriture
+        }).toList();
+
+    if (availablePositions.isNotEmpty) {
+      availablePositions.shuffle();
+      Vector2 bombPosition = availablePositions.first;
+      _bomb = Bomb(bombPosition);
+    }
+  }
+
+  void _placeFoodOnGrid() {
+    // Filtrer les positions de la grille qui ne sont pas occupées par le serpent
+    List<Vector2> availablePositions =
+        _gridPositions.where((pos) {
+          return !_snake.body.any(
+            (segment) =>
+                segment.position.x == pos.x && segment.position.y == pos.y,
+          );
+        }).toList();
+
+    if (availablePositions.isNotEmpty) {
+      // Sélectionner une position aléatoire parmi les positions disponibles
+      availablePositions.shuffle();
+      Vector2 foodPosition = availablePositions.first;
+      _eat.position = foodPosition;
+    }
   }
 
   void _startGame() {
-    _timer = async.Timer.periodic(Duration(milliseconds: _snake.vitesse), (timer) {
+    _lastDirection = _snake.direction;
+
+    _timer = async.Timer.periodic(Duration(milliseconds: _snakeSpeed), (timer) {
       if (!_isPaused && !_isGameOver) {
         setState(() {
-          _snake.move();
+          _snake.moveOnGrid(
+            _gridPositions,
+            _cellSize,
+          ); // Déplacer le serpent sur la grille
           _temps++;
+          if (_snake.body.first.position.distanceTo(_bomb.position) <
+              _cellSize * 0.5) {
+            _isGameOver = true;
+            _timer.cancel();
+            _playSound('sons/boom.mp3'); // Ajoute ce son dans assets si tu veux
+            _playSound('sons/game_over.mp3');
+            _takeScreenshot(context);
+            if (mounted) _showGameOverDialog();
+          }
 
           if (_checkCollision()) {
             _isGameOver = true;
             _timer.cancel();
-            _playSound('sons/game_over.mp3');
-            _takeScreenshot();
+            _playSound('sons/game_over.mp3'); // Jouer son de fin de jeu
+            _takeScreenshot(context); // Prendre une capture d'écran
+
+            if (mounted) {
+              _showGameOverDialog();
+            }
           }
 
-          if (_snake.body.first.position.distanceTo(_eat.position) < 20) {
+          if (_snake.body.first.position.distanceTo(_eat.position) <
+              _cellSize * 0.5) {
             _score += 10;
-            _snake.grow();
-            _relocateFood();
-            _playSound('sons/eat.mp3');
-          }
-
-          if (_temps % 100 == 0 && _snake.vitesse > 50) {
-            _snake.vitesse -= 10;
-            _restartTimer();
+            _snake.grow(); // Ajoute un segment lorsque le serpent mange
+            _placeFoodOnGrid(); // Relocaliser la nourriture sur la grille
+            _playSound('sons/eat.mp3'); // Jouer son de nourriture mangée
           }
         });
       }
     });
   }
 
-  void _restartTimer() {
-    _timer.cancel();
-    _timer = async.Timer.periodic(Duration(milliseconds: _snake.vitesse), (timer) {
-      if (!_isPaused && !_isGameOver) {
-        setState(() {
-          _snake.move();
-          _temps++;
+  void _showGameOverDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (_) => AlertDialog(
+            title: const Text("Game Over"),
+            content: Text("Votre score est $_score.\nVoulez-vous rejouer ?"),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _restartGame();
+                },
+                child: const Text("Rejouer"),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  Navigator.of(context).pop(); // Retour à la page précédente
+                },
+                child: const Text("Quitter"),
+              ),
+            ],
+          ),
+    );
+  }
 
-          if (_checkCollision()) {
-            _isGameOver = true;
-            _timer.cancel();
-            _playSound('sons/game_over.mp3');
-            _takeScreenshot();
-          }
+  void _restartGame() {
+    setState(() {
+      _initializeGrid();
+      _snake = Snake();
+      _snake.vitesse = _snakeSpeed;
+      _snake.cellSize = _cellSize;
+      _snake.initializeOnGrid(_gridPositions);
+      _lastDirection = Vector2(1, 0);
 
-          if (_snake.body.first.position.distanceTo(_eat.position) < 20) {
-            _score += 10;
-            _snake.grow();
-            _relocateFood();
-            _playSound('sons/eat.mp3');
-          }
+      _eat = Eat(Vector2(0, 0));
+      _eat.size = Vector2(_cellSize * 0.8, _cellSize * 0.8);
+      _placeFoodOnGrid();
 
-          if (_temps % 100 == 0 && _snake.vitesse > 50) {
-            _snake.vitesse -= 10;
-            _restartTimer();
-          }
-        });
-      }
+      _score = 0;
+      _temps = 0;
+      _isPaused = false;
+      _isGameOver = false;
     });
+
+    _startGame(); // Redémarre le jeu
+  }
+
+  void _playSound(String path) async {
+    await _audioPlayer.setSource(AssetSource(path));
+    await _audioPlayer.resume();
   }
 
   bool _checkCollision() {
-    final head = _snake.body.first;
-    final centerX = head.position.x + head.size.x / 2;
-    final centerY = head.position.y + head.size.y / 2;
-    return !_isInsideTriangle(centerX, centerY, _gameSize.x, _gameSize.y);
-  }
+    final head = _snake.body.first.position;
 
-  bool _isInsideTriangle(double x, double y, double width, double height) {
-    Vector2 p = Vector2(x, y);
-    Vector2 a = Vector2(width / 2, 0);
-    Vector2 b = Vector2(width, height);
-    Vector2 c = Vector2(0, height);
-
-    double sign(Vector2 p1, Vector2 p2, Vector2 p3) {
-      return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+    // Vérifiez si la tête du serpent dépasse les limites de la grille
+    if (head.x < 0 ||
+        head.x + _cellSize > _gameSize.x ||
+        head.y < 0 ||
+        head.y + _cellSize > _gameSize.y) {
+      return true;
     }
 
-    double d1 = sign(p, a, b);
-    double d2 = sign(p, b, c);
-    double d3 = sign(p, c, a);
+    // Vérifiez si la tête touche un autre segment du corps (sauf le dernier segment qui se déplace)
+    for (int i = 1; i < _snake.body.length - 1; i++) {
+      if (_snake.body[i].position.distanceTo(head) < _cellSize * 0.5) {
+        return true;
+      }
+    }
 
-    bool hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
-    bool hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
-
-    return !(hasNeg && hasPos);
-  }
-
-  void _relocateFood() {
-    final rand = Random();
-    double x, y;
-    const padding = 10;
-
-    do {
-      x = padding + rand.nextDouble() * (_gameSize.x - 2 * padding);
-      y = padding + rand.nextDouble() * (_gameSize.y - 2 * padding);
-    } while (!_isInsideTriangle(x, y, _gameSize.x, _gameSize.y));
-
-    _eat.relocate(Vector2(x, y), _snake.body);
+    return false;
   }
 
   void _pauseGame() {
@@ -156,50 +249,63 @@ class _GrilleDifficileState extends State<GrilleDifficile> {
     });
   }
 
-  void _updateDirection(Vector2 direction) {
+  void _updateDirection(Vector2 newDirection) {
+    if (_isOppositeDirection(_lastDirection, newDirection)) {
+      // Ne rien faire si c'est la direction opposée
+      return;
+    }
+
     setState(() {
-      _snake.changeDirection(direction);
+      _snake.changeDirection(newDirection);
+      _lastDirection = newDirection; // Mettre à jour la dernière direction
     });
   }
 
-  void _playSound(String path) async {
-    await _audioPlayer.setSource(AssetSource(path));
-    await _audioPlayer.resume();
+  bool _isOppositeDirection(Vector2 d1, Vector2 d2) {
+    return (d1.x + d2.x == 0 && d1.y + d2.y == 0);
   }
 
-  Future<void> _takeScreenshot() async {
-    final image = await _screenshotController.capture();
-    if (image != null) {
-      await Share.share('J’ai obtenu $_score points ! 🎮');
+  // Prise de la capture d'écran
+  Future<void> _takeScreenshot(BuildContext context) async {
+    try {
+      // Vérifiez que le RepaintBoundary est disponible
+      if (_repaintBoundaryKey.currentContext != null) {
+        RenderRepaintBoundary boundary =
+            _repaintBoundaryKey.currentContext!.findRenderObject()
+                as RenderRepaintBoundary;
+        var image = await boundary.toImage();
+        ByteData? byteData = await image.toByteData(
+          format: ui.ImageByteFormat.png,
+        );
+        if (byteData != null) {
+          Uint8List pngBytes = byteData.buffer.asUint8List();
+          await _shareScreenshot(pngBytes);
+
+          // Afficher un message de succès
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Capture d\'écran réussie !'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print("Erreur de capture d'écran : $e");
     }
   }
 
-  void _restartOrQuit() {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text("Fin du jeu"),
-          content: Text("Votre score: $_score\n\nVoulez-vous rejouer ?"),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Ferme le dialogue
-                _startNewGame(); // Redémarre le jeu
-              },
-              child: const Text("Rejouer"),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Ferme le dialogue
-                Navigator.of(context).pop(); // Quitte le jeu
-              },
-              child: const Text("Quitter"),
-            ),
-          ],
-        );
-      },
-    );
+  Future<void> _shareScreenshot(Uint8List imageBytes) async {
+    try {
+      final directory = await getTemporaryDirectory();
+      final imagePath = '${directory.path}/screenshot.png';
+      final file = File(imagePath);
+      await file.writeAsBytes(imageBytes);
+
+      await Share.share('Voici ma capture d\'écran !\n$imagePath');
+    } catch (e) {
+      print("Erreur lors du partage : $e");
+    }
   }
 
   @override
@@ -220,16 +326,27 @@ class _GrilleDifficileState extends State<GrilleDifficile> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(widget.nomDuJoueur,
-                    style: const TextStyle(
-                        fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
-                Text("Score: $_score",
-                    style: const TextStyle(fontSize: 16, color: Colors.white)),
-                Text("Temps: $_temps s",
-                    style: const TextStyle(fontSize: 16, color: Colors.white)),
+                Text(
+                  widget.nomDuJoueur,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  "Score: $_score",
+                  style: const TextStyle(fontSize: 16, color: Colors.white),
+                ),
+                Text(
+                  "Temps: $_temps s",
+                  style: const TextStyle(fontSize: 16, color: Colors.white),
+                ),
                 ElevatedButton(
                   onPressed: _pauseGame,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.grey[800]),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[800],
+                  ),
                   child: Text(_isPaused ? 'Reprendre' : 'Pause'),
                 ),
               ],
@@ -237,41 +354,202 @@ class _GrilleDifficileState extends State<GrilleDifficile> {
           ),
           const SizedBox(height: 10),
           Expanded(
-            child: Screenshot(
-              controller: _screenshotController,
-              child: CustomPaint(
-                size: Size(_gameSize.x, _gameSize.y),
-                painter: TrianglePainter(),
-                child: Stack(
-                  children: [
-                    for (var segment in _snake.body)
+            child: RepaintBoundary(
+              key: _repaintBoundaryKey,
+              child: Screenshot(
+                controller: _screenshotController,
+                child: Container(
+                  width: _gameSize.x,
+                  height: _gameSize.y,
+                 
+                  child: Stack(
+                    children: [
+                      // Grille de cercles
+                      ..._gridPositions.map(
+                        (position) => Positioned(
+                          left: position.x,
+                          top: position.y,
+                          child: Container(
+                            width: _cellSize,
+                            height: _cellSize,
+                            decoration: BoxDecoration(
+                              color: Colors.lime.withOpacity(0.3),
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.lime, width: 1),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // Corps du serpent (segments)
+                      ..._snake.body.asMap().entries.map((entry) {
+                        int index = entry.key;
+                        var segment = entry.value;
+
+                        if (index == 0) {
+                          // Tête du serpent (plus réaliste avec des yeux)
+                          return Positioned(
+                            left: segment.position.x,
+                            top: segment.position.y,
+                            child: Container(
+                              width: _cellSize,
+                              height: _cellSize,
+                              decoration: BoxDecoration(
+                                color: Colors.green[700],
+                                shape: BoxShape.circle,
+                              ),
+                              child: Stack(
+                                children: [
+                                  // Œil gauche
+                                  Positioned(
+                                    left:
+                                        _snake.direction.x > 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    top:
+                                        _snake.direction.y > 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    child: Container(
+                                      width: _cellSize * 0.25,
+                                      height: _cellSize * 0.25,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Center(
+                                        child: Container(
+                                          width: _cellSize * 0.1,
+                                          height: _cellSize * 0.1,
+                                          decoration: const BoxDecoration(
+                                            color: Colors.black,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  // Œil droit
+                                  Positioned(
+                                    right:
+                                        _snake.direction.x < 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    top:
+                                        _snake.direction.y > 0
+                                            ? _cellSize * 0.6
+                                            : _cellSize * 0.2,
+                                    child: Container(
+                                      width: _cellSize * 0.25,
+                                      height: _cellSize * 0.25,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Center(
+                                        child: Container(
+                                          width: _cellSize * 0.1,
+                                          height: _cellSize * 0.1,
+                                          decoration: const BoxDecoration(
+                                            color: Colors.black,
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        } else if (index == _snake.body.length - 1) {
+                          // Queue du serpent (plus petit et pointu)
+                          return Positioned(
+                            left: segment.position.x + _cellSize * 0.1,
+                            top: segment.position.y + _cellSize * 0.1,
+                            child: Container(
+                              width: _cellSize * 0.8,
+                              height: _cellSize * 0.8,
+                              decoration: BoxDecoration(
+                                color: Colors.green[300],
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          );
+                        } else {
+                          // Corps du serpent (alternance de cercles et carrés arrondis)
+                          return Positioned(
+                            left: segment.position.x,
+                            top: segment.position.y,
+                            child: Container(
+                              width: _cellSize,
+                              height: _cellSize,
+                              decoration: BoxDecoration(
+                                color:
+                                    index % 2 == 0
+                                        ? Colors.green
+                                        : Colors.green[500],
+                                shape:
+                                    index % 3 == 0
+                                        ? BoxShape.circle
+                                        : BoxShape.rectangle,
+                                borderRadius:
+                                    index % 3 != 0
+                                        ? BorderRadius.circular(5)
+                                        : null,
+                              ),
+                            ),
+                          );
+                        }
+                      }),
+
+                      // Nourriture (cercle orange)
                       Positioned(
-                        left: segment.position.x,
-                        top: segment.position.y,
+                        left: _eat.position.x + _cellSize * 0.1,
+                        top: _eat.position.y + _cellSize * 0.1,
                         child: Container(
-                          width: segment.size.x,
-                          height: segment.size.y,
-                          color: Colors.green,
+                          width: _eat.size.x,
+                          height: _eat.size.y,
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Container(
+                              width: _eat.size.x * 0.5,
+                              height: _eat.size.y * 0.5,
+                              decoration: const BoxDecoration(
+                                color: Colors.orange,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    Positioned(
-                      left: _eat.position.x,
-                      top: _eat.position.y,
-                      child: Container(
-                        width: _eat.size.x,
-                        height: _eat.size.y,
-                        decoration: const BoxDecoration(
-                          color: Colors.orange,
-                          shape: BoxShape.circle,
+                      // bombe
+                      Positioned(
+                        left: _bomb.position.x,
+                        top: _bomb.position.y,
+                        child: Container(
+                          width: _bomb.size.x+3,
+                          height: _bomb.size.y+3,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            image: DecorationImage(
+                              image: AssetImage('assets/images/bombe.png'),
+                              fit: BoxFit.cover,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
           const SizedBox(height: 10),
+          // Flèches de direction
           SizedBox(
             height: 80,
             child: Row(
@@ -332,42 +610,13 @@ class _GrilleDifficileState extends State<GrilleDifficile> {
           ),
           const SizedBox(height: 20),
           const Divider(color: Colors.red),
-          if (_isGameOver) ...[
-            // Afficher le message de fin de jeu ici
-            Text(
+          if (_isGameOver)
+            const Text(
               "Game Over",
               style: TextStyle(color: Colors.red, fontSize: 24),
             ),
-            // Appeler la méthode pour redémarrer ou quitter
-            ElevatedButton(
-              onPressed: _restartOrQuit,
-              child: const Text("Rejouer"),
-            ),
-          ],
         ],
       ),
     );
-  }
-}
-
-class TrianglePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.blue
-      ..style = PaintingStyle.fill;
-
-    final path = Path();
-    path.moveTo(size.width / 2, 0);
-    path.lineTo(size.width, size.height);
-    path.lineTo(0, size.height);
-    path.close();
-
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
   }
 }
